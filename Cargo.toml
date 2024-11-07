@@ -5,6 +5,8 @@ edition = "2021"
 repository = "https://github.com/MaartenBehn/glsl_compiler"
 readme = "README.md"
 keywords = ["vulkan", "shader", "glsl", "sqriv", "marco"]
+description = "Write GLSL Code directly in a marco!"
+license = "MIT"
 
 [lib]
 proc-macro = true
