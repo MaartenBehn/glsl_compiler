@@ -12,7 +12,7 @@ enum Token {
 
 #[proc_macro_error(proc_macro_hack)]
 #[proc_macro]
-pub fn glsl_comp(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = proc_macro2::TokenStream::from(input);
     let mut current_token = Token::None;
     let mut type_token = Token::None;
@@ -67,7 +67,7 @@ pub fn glsl_comp(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
     // Check type Key
     let type_write_help = "Write: type = <shader type>";
-    let type_possible_value_help = "Possible shader types: comp";
+    let type_possible_value_help = "Possible shader types: Compute, Vertex, Fragment, Geometry, Mesh, RayGeneration, AnyHit, ClosestHit, Miss";
     let glsl_type = match type_token {
         Token::None => {abort_call_site!("Key missing: type"; help=type_write_help; note=type_possible_value_help)}
         Token::Type(false) => {abort_call_site!("Invalid Key: type"; help=type_write_help; note=type_possible_value_help)}
@@ -76,8 +76,24 @@ pub fn glsl_comp(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 abort_call_site!("Missing Value for: type ="; help=type_write_help; note=type_possible_value_help)
             }
 
-            if type_text == Some("comp".to_string()) {
+            if type_text == Some("Compute".to_string()) {
                 shaderc::ShaderKind::Compute
+            } else if type_text == Some("Vertex".to_string()) {
+                shaderc::ShaderKind::Vertex
+            }else if type_text == Some("Fragment".to_string()) {
+                shaderc::ShaderKind::Fragment
+            } else if type_text == Some("Geometry".to_string()) {
+                shaderc::ShaderKind::Geometry
+            } else if type_text == Some("Mesh".to_string()) {
+                shaderc::ShaderKind::Mesh
+            } else if type_text == Some("RayGeneration".to_string()) {
+                shaderc::ShaderKind::RayGeneration
+            } else if type_text == Some("AnyHit".to_string()) {
+                shaderc::ShaderKind::AnyHit
+            } else if type_text == Some("ClosestHit".to_string()) {
+                shaderc::ShaderKind::ClosestHit
+            } else if type_text == Some("Miss".to_string()) {
+                shaderc::ShaderKind::Miss
             } else {
                 abort_call_site!("Invalid type Value: {}", type_text.unwrap(); help=type_possible_value_help;)
             }
