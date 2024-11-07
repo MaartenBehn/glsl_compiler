@@ -1,0 +1,12 @@
+[package]
+name = "glsl_compiler"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro-error = "1.0.4"
+shaderc = "0.8.3"
+proc-macro2 = { version = "1.0.89", features = ["span-locations"] }
