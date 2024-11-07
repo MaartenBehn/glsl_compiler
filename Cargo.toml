@@ -2,6 +2,9 @@
 name = "glsl_compiler"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/MaartenBehn/glsl_compiler"
+readme = "README.md"
+keywords = ["vulkan", "shader", "glsl", "sqriv", "marco"]
 
 [lib]
 proc-macro = true
