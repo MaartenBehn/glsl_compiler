@@ -72,18 +72,19 @@ error:  no matching overloaded function found
 
 extern crate proc_macro;
 
+use std::{fs, str};
+use std::path::Path;
 use proc_macro2::{Span, TokenTree};
 use proc_macro_error::{abort_call_site, emit_call_site_error, emit_error, proc_macro_error};
 use std::str::FromStr;
+use shaderc::{IncludeCallbackResult, IncludeType, ResolvedInclude};
 
 enum Token {
     None,
     Type(bool),
     Code(bool),
+    Name,
 }
-
-
-
 
 /**
 ## Example
@@ -129,7 +130,7 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     for token in input.into_iter(){
         let text = token.span().source_text().unwrap();
 
-        if text == "," ||text == ";" {
+        if text == "," || text == ";" {
             continue
         }
 
@@ -139,6 +140,8 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         } else if text == "code" {
             current_token = Token::Code(false);
             code_token = Token::Code(false);
+        } else if text == "name" {
+            current_token = Token::Name;
         } else if text == "=" {
             match current_token {
                 Token::Type(false) => {
@@ -198,6 +201,8 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 shaderc::ShaderKind::ClosestHit
             } else if type_text == Some("Miss".to_string()) {
                 shaderc::ShaderKind::Miss
+            } else if type_text == Some("Include".to_string()) {
+                shaderc::ShaderKind::SpirvAssembly
             } else {
                 abort_call_site!("Invalid type Value: {}", type_text.unwrap(); help=type_possible_value_help;)
             }
@@ -219,9 +224,11 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         _ => {unreachable!()}
     };
 
-    //println!("Shader input {source}");
+    println!("Shader input {source}");
     let compiler = shaderc::Compiler::new().unwrap();
-    let options = shaderc::CompileOptions::new().unwrap();
+    let mut options = shaderc::CompileOptions::new().unwrap();
+    options.set_include_callback(handle_include);
+
     let binary_result = compiler.compile_into_spirv(
         &source,
         glsl_type,
@@ -236,11 +243,17 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         
         for err_line in err_lines.iter().skip(1) {
             let parts: Vec<_> = err_line.split(":").collect();
-            //println!("Err Message Parts {parts:?}");
+
+            println!("Err Message Parts {parts:?}");
+            let line = parts[0].parse::<usize>();
+            if line.is_err() {
+                println!("Err Message Parts {parts:?}");
+                continue;
+            }
+            let line = line.unwrap();
             
-            let line = parts[0].parse::<usize>().unwrap();
             let key = parts[2].strip_prefix(" '").unwrap().strip_suffix("' ").unwrap();
-            //println!("Error line {line}, Error key {key}");
+            println!("Error line {line}, Error key {key}");
             
             let (span, _, _) = find_best_line(&source, code_token_tree.clone(), key,0, line - 1);
             if span.is_some() {
@@ -299,3 +312,77 @@ fn find_best_line<'a>(mut source: &'a str, t: TokenTree, key: &'a str, mut curre
 
     (None, source, current_line)
 }
+
+fn handle_include(path: &str, _: IncludeType, _: &str, _: usize) -> IncludeCallbackResult {
+    
+    let parts: Vec<&str> = path.split('-').collect();
+    if parts.is_empty() {
+        return Err(format!("Include Error The Path {path} has no \"-\""))
+    }
+
+    if parts.len() > 2 {
+        return Err(format!("Include Error The Path {path} has more than one \"-\""))
+    }
+    let file_path = parts[0];
+    let glsl_macro_name = parts[1];
+
+    if !Path::new(file_path).exists() {
+        return Err(format!("Include Error The File {file_path} could not be found."))
+    }
+
+    let content = fs::read_to_string(parts[0]);
+    if content.is_err() {
+        return Err(format!("Include Error: The File {file_path} could not be read."))
+    }
+    let content = content.unwrap();
+
+    let found_indices: Vec<usize> = content.match_indices(&format!("name = \"{glsl_macro_name}\"")).map(|(i, _)|i).collect();
+    if found_indices.is_empty() {
+        return Err(format!("Include Error No glsl! marco with the name = \"{glsl_macro_name}\" in {file_path}."))
+    }
+
+    if found_indices.len() > 1 {
+        return Err(format!("Include Error More than one occurrence of name = \"{glsl_macro_name}\" in {file_path}."))
+    }
+    let name_index = found_indices[0];
+    let code_start_index = content[name_index..].find("code = {");
+    if code_start_index.is_none() {
+        return Err(format!("Include Error No opening Brace found! name = \"{glsl_macro_name}\" must be followed by a code = {{<glsl>}}."))
+    }
+    let code_start_index = code_start_index.unwrap() + name_index;
+
+    let mut counter = 1;
+    let mut code_end_index = None;
+    for (offset, val) in content[code_start_index..]
+        .match_indices(['{', '}'])
+        .into_iter() {
+
+        if val == "{" {
+            counter += 1;
+        } else if val == "}" {
+            counter -= 1;
+        }
+
+        if counter <= 0 {
+            code_end_index = Some(offset -2);
+            break
+        }
+    }
+
+    if code_end_index.is_none() {
+        return Err(format!("Include Error No closing Brace found! name = \"{glsl_macro_name}\" must be followed by a code = {{<glsl>}}. \
+         Start index {code_start_index}. \
+         Searched in {content:?}"))
+    }
+    let code_end_index = code_end_index.unwrap() + code_start_index;
+    let glsl_content = &content[code_start_index..code_end_index];
+
+    println!("Include: {glsl_content}");
+
+    Ok(ResolvedInclude {
+        resolved_name: path.to_string(),
+        content: glsl_content.to_string(),
+    })
+}
+
+
