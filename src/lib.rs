@@ -73,6 +73,7 @@ error:  no matching overloaded function found
 extern crate proc_macro;
 
 use std::{fs, str};
+use std::fmt::format;
 use std::path::Path;
 use proc_macro2::{Span, TokenTree};
 use proc_macro_error::{abort_call_site, emit_call_site_error, emit_error, proc_macro_error};
@@ -202,7 +203,7 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             } else if type_text == Some("Miss".to_string()) {
                 shaderc::ShaderKind::Miss
             } else if type_text == Some("Include".to_string()) {
-                shaderc::ShaderKind::SpirvAssembly
+                return proc_macro::TokenStream::from_str("()").unwrap()
             } else {
                 abort_call_site!("Invalid type Value: {}", type_text.unwrap(); help=type_possible_value_help;)
             }
@@ -241,29 +242,37 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
         let code_token_tree = code_token_tree.unwrap();
         
-        for err_line in err_lines.iter().skip(1) {
-            let parts: Vec<_> = err_line.split(":").collect();
+        if err_lines.len() == 1 {
+            emit_call_site_error!("{}", err);
+        } else {
+            for err_line in err_lines.iter().skip(1) {
+                let parts: Vec<_> = err_line.split(":").collect();
 
-            println!("Err Message Parts {parts:?}");
-            let line = parts[0].parse::<usize>();
-            if line.is_err() {
-                println!("Err Message Parts {parts:?}");
-                continue;
-            }
-            let line = line.unwrap();
-            
-            let key = parts[2].strip_prefix(" '").unwrap().strip_suffix("' ").unwrap();
-            println!("Error line {line}, Error key {key}");
-            
-            let (span, _, _) = find_best_line(&source, code_token_tree.clone(), key,0, line - 1);
-            if span.is_some() {
-                emit_error!(span.unwrap(), "{}", parts[3])
-            } else {
-                emit_call_site_error!("{}", parts[3])
+                // println!("Err Message Parts {parts:?}");
+                let line = parts[0].parse::<usize>();
+                if line.is_err() {
+                    emit_call_site_error!("Error: {}", err_line);
+                    continue;
+                }
+                let line = line.unwrap();
+
+                let key = parts[2].strip_prefix(" '").unwrap().strip_suffix("' ");
+                if key.is_none() {
+                    emit_call_site_error!("Error: {}", err_line);
+                    continue;
+                }
+                let key = key.unwrap();
+
+                let (span, _, _) = find_best_line(&source, code_token_tree.clone(), key,0, line - 1);
+                if span.is_some() {
+                    emit_error!(span.unwrap(), "{}", parts[3])
+                } else {
+                    emit_call_site_error!("{}", parts[3])
+                }
             }
         }
         
-        proc_macro::TokenStream::from_str(&"()").unwrap()
+        proc_macro::TokenStream::from_str(&format!("panic!(\"{err}\")")).unwrap()
     } else {
         let mut res = "&[".to_string();
         for byte in binary_result.unwrap().as_binary_u8() {
@@ -349,7 +358,7 @@ fn handle_include(path: &str, _: IncludeType, _: &str, _: usize) -> IncludeCallb
     if code_start_index.is_none() {
         return Err(format!("Include Error No opening Brace found! name = \"{glsl_macro_name}\" must be followed by a code = {{<glsl>}}."))
     }
-    let code_start_index = code_start_index.unwrap() + name_index;
+    let code_start_index = code_start_index.unwrap() + name_index + 8;
 
     let mut counter = 1;
     let mut code_end_index = None;
@@ -377,7 +386,7 @@ fn handle_include(path: &str, _: IncludeType, _: &str, _: usize) -> IncludeCallb
     let code_end_index = code_end_index.unwrap() + code_start_index;
     let glsl_content = &content[code_start_index..code_end_index];
 
-    println!("Include: {glsl_content}");
+    //return Err(format!("glsl_content {glsl_content}"));
 
     Ok(ResolvedInclude {
         resolved_name: path.to_string(),

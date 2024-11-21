@@ -7,6 +7,7 @@ Write GLSL Code directly in a marco!
 - Compile-time evaluation to binary slice
 - No nightly needed
 - Errors with correct lines
+- #include code from other marcos
 
 Finally, it's possible to write GLSL directly in Rust.
 
@@ -36,6 +37,7 @@ Possible types
 - Compute
 - Vertex Fragment, Geometry, Mesh
 - RayGeneration, AnyHit, ClosestHit, Miss
+- Include
 
 ## Proper Errors 
 ```Rust 
@@ -66,4 +68,32 @@ error:  no matching overloaded function found
    |
 13 |             imageStore(img, ivec2(pos), colo);
    |             ^^^^^^^^^^
+```
+
+## Including Code from other Macro
+
+Example File Name: "lib.rs"
+```rust 
+fn shader() {
+    let bin = glsl!{type = Compute, code = {
+        #version 450 core
+        
+        #include "src/lib.rs-included.glsl"
+    
+        layout(binding = 0, rgba8) uniform writeonly image2D img;
+        void main () {
+            uvec2 pos = gl_GlobalInvocationID.xy;
+            imageStore(img, ivec2(pos), COLOR);
+        }
+    }};
+
+    println!("{:?}", bin)
+}
+
+#[allow(dead_code)]
+fn included() {
+    glsl!{type = Include, name = "included.glsl", code = {
+        #define COLOR vec4(pos, 0.0, 1.0)
+    }};
+}
 ```

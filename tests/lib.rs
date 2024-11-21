@@ -20,7 +20,7 @@ fn void_main_empty() {
 }
 
 #[test]
-fn include() {
+fn shader() {
     let bin = glsl!{type = Compute, code = {
         #version 450 core
         
@@ -39,8 +39,6 @@ fn include() {
 #[allow(dead_code)]
 fn included() {
     glsl!{type = Include, name = "included.glsl", code = {
-        #version 450 core
-        
         #define COLOR vec4(pos, 0.0, 1.0)
     }};
 }
