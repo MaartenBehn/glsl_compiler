@@ -67,17 +67,68 @@ error:  no matching overloaded function found
 13 |             imageStore(img, ivec2(pos), colo);
    |             ^^^^^^^^^^
 ```
+
+
+## Just compiling a glsl file at compile time
+```rust
+let bin: &[u8] = glsl!{type = Compute, file = "shaders/test.glsl"};
+```
+
+## Including Code from other glsl file
+
+Example Glsl File Name: "shaders/included.glsl"
+```rust
+let bin: &[u8] = glsl!{type = Compute, code = {
+    #version 450 core
+    
+    #include "shaders/included.glsl"
+
+    layout(binding = 0, rgba8) uniform writeonly image2D img;
+    void main () {
+        uvec2 pos = gl_GlobalInvocationID.xy;
+        imageStore(img, ivec2(pos), COLOR);
+    }
+}};
+```
+
+## Including Code from other Macro
+
+Example Rust File Name: "src/main.rs"
+```rust 
+fn shader() {
+    let bin: &[u8] = glsl!{type = Compute, code = {
+        #version 450 core
+        
+        #include "src/main.rs-included.glsl"
+    
+        layout(binding = 0, rgba8) uniform writeonly image2D img;
+        void main () {
+            uvec2 pos = gl_GlobalInvocationID.xy;
+            imageStore(img, ivec2(pos), COLOR);
+        }
+    }};
+
+    println!("{:?}", bin)
+}
+
+#[allow(dead_code)]
+fn included() {
+    glsl!{type = Include, name = "included.glsl", code = {
+        #define COLOR vec4(pos, 0.0, 1.0)
+    }};
+}
+```
 */
 
 
 extern crate proc_macro;
 
 use std::{fs, str};
-use std::fmt::format;
 use std::path::Path;
 use proc_macro2::{Span, TokenTree};
 use proc_macro_error::{abort_call_site, emit_call_site_error, emit_error, proc_macro_error};
 use std::str::FromStr;
+use std::string::ToString;
 use shaderc::{IncludeCallbackResult, IncludeType, ResolvedInclude};
 
 enum Token {
@@ -85,7 +136,10 @@ enum Token {
     Type(bool),
     Code(bool),
     Name,
+    File(bool),
 }
+
+const MARCO_FILE_PATH: &str = "in_marco";
 
 /**
 ## Example
@@ -126,6 +180,7 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
     let mut type_text = None;
     let mut code_text = None;
+    let mut file_text = None;
     let mut code_token_tree = None;
 
     for token in input.into_iter(){
@@ -143,6 +198,8 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             code_token = Token::Code(false);
         } else if text == "name" {
             current_token = Token::Name;
+        } else if text == "file" {
+            current_token = Token::File(false);
         } else if text == "=" {
             match current_token {
                 Token::Type(false) => {
@@ -152,6 +209,9 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 Token::Code(false) => {
                     current_token = Token::Code(true);
                     code_token = Token::Code(true);
+                }
+                Token::File(false) => {
+                    current_token = Token::File(true);
                 }
                 _ => {}
             }
@@ -168,14 +228,17 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     code_text = Some(t.unwrap().to_string());
                     code_token_tree = Some(token);
                 }
+                Token::File(true) => {
+                    file_text = Some(text);
+                }
                 _ => {}
             }
         }
     }
-
+    
     // Check type Key
     let type_write_help = "Write: type = <shader type>";
-    let type_possible_value_help = "Possible shader types: Compute, Vertex, Fragment, Geometry, Mesh, RayGeneration, AnyHit, ClosestHit, Miss";
+    let type_possible_value_help = "Possible shader types: Compute, Vertex, Fragment, Geometry, Mesh, RayGeneration, AnyHit, ClosestHit, Miss, Include";
     let glsl_type = match type_token {
         Token::None => {abort_call_site!("Key missing: type"; help=type_write_help; note=type_possible_value_help)}
         Token::Type(false) => {abort_call_site!("Invalid Key: type"; help=type_write_help; note=type_possible_value_help)}
@@ -211,20 +274,48 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         _ => {unreachable!()}
     };
 
-    // Check code Key
-    let code_write_help = "Write: code = {<glsl>}";
-    let source = match code_token {
-        Token::None => {abort_call_site!("Key missing: code"; help=code_write_help)}
-        Token::Code(false) => {abort_call_site!("Invalid Key: code"; help=code_write_help)}
-        Token::Code(true) => {
-            if code_text.is_none() {
-                abort_call_site!("Missing Value for: code ="; help=code_write_help)
-            }
-            code_text.unwrap()
+    
+    let (source, file_path) = if file_text.is_some(){
+        if code_token_tree.is_some() {
+            abort_call_site!("Cannot use file = \"<glsl file path>\" and code = <glsl code> in one marco");
         }
-        _ => {unreachable!()}
+
+        let file_path = file_text.unwrap();
+        let file_path = file_path.strip_prefix('"');
+        if file_path.is_none() {
+            abort_call_site!("Write file = \"<glsl file path>\"")
+        }
+        let file_path = file_path.unwrap().strip_suffix('"');
+        if file_path.is_none() {
+            abort_call_site!("Write file = \"<glsl file path>\"")
+        }
+        let file_path = file_path.unwrap();
+
+        if !Path::new(file_path).exists() {
+            abort_call_site!("The File {} could not be found.", file_path)
+        }
+
+        let content = fs::read_to_string(file_path);
+        if content.is_err() {
+            abort_call_site!("The File {} could not be read.", file_path)
+        }
+        (content.unwrap(), file_path.to_string())
+    } else {
+        let code_write_help = "Write: code = {<glsl>}";
+        (match code_token {
+            Token::None => {abort_call_site!("Key missing: code"; help=code_write_help)}
+            Token::Code(false) => {abort_call_site!("Invalid Key: code"; help=code_write_help)}
+            Token::Code(true) => {
+                if code_text.is_none() {
+                    abort_call_site!("Missing Value for: code ="; help=code_write_help)
+                }
+                code_text.unwrap()
+            }
+            _ => {unreachable!()}
+        }, MARCO_FILE_PATH.to_string())
     };
 
+    
     println!("Shader input {source}");
     let compiler = shaderc::Compiler::new().unwrap();
     let mut options = shaderc::CompileOptions::new().unwrap();
@@ -233,18 +324,17 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let binary_result = compiler.compile_into_spirv(
         &source,
         glsl_type,
-        "shader.glsl",
+        &file_path,
         "main", Some(&options));
-
+    
     if binary_result.is_err() {
         let err = binary_result.err().unwrap().to_string();
-        let err_lines: Vec<_> = err.split("shader.glsl:").collect();
-
-        let code_token_tree = code_token_tree.unwrap();
+        let err_lines: Vec<_> = err.split(&format!("{file_path}:")).collect();
         
-        if err_lines.len() == 1 {
+        if file_path != MARCO_FILE_PATH || err_lines.len() == 1 {
             emit_call_site_error!("{}", err);
         } else {
+            let code_token_tree = code_token_tree.unwrap();
             for err_line in err_lines.iter().skip(1) {
                 let parts: Vec<_> = err_line.split(":").collect();
 
@@ -322,24 +412,54 @@ fn find_best_line<'a>(mut source: &'a str, t: TokenTree, key: &'a str, mut curre
     (None, source, current_line)
 }
 
-fn handle_include(path: &str, _: IncludeType, _: &str, _: usize) -> IncludeCallbackResult {
+fn handle_include(path: &str, _: IncludeType, file_path: &str, _: usize) -> IncludeCallbackResult {
     
     let parts: Vec<&str> = path.split('-').collect();
-    if parts.is_empty() {
-        return Err(format!("Include Error The Path {path} has no \"-\""))
+    if parts.is_empty() || parts.len() == 1 {
+        return handle_glsl_include(path, file_path)
     }
 
     if parts.len() > 2 {
         return Err(format!("Include Error The Path {path} has more than one \"-\""))
     }
-    let file_path = parts[0];
-    let glsl_macro_name = parts[1];
+    
+    handle_rust_include(parts[0], parts[1])
+}
 
+fn handle_glsl_include(file_path: &str, origen_path: &str) -> IncludeCallbackResult {
+    let path = if origen_path != MARCO_FILE_PATH {
+        let path = Path::new(origen_path);
+        if let Some(parent_path) = path.parent() {
+            format!("{}/{}", parent_path.to_str().unwrap(), file_path)
+        } else {
+            file_path.to_string()
+        }
+    } else {
+        file_path.to_string()
+    };
+    
+    if !Path::new(&path).exists() {
+        return Err(format!("Include Error The File {path} could not be found."))
+    }
+
+    let content = fs::read_to_string(&path);
+    if content.is_err() {
+        return Err(format!("Include Error: The File {path} could not be read."))
+    }
+    let content = content.unwrap();
+    
+    Ok(ResolvedInclude {
+        resolved_name: file_path.to_string(),
+        content: content.to_string(),
+    })
+}
+
+fn handle_rust_include(file_path: &str, glsl_macro_name: &str) -> IncludeCallbackResult {
     if !Path::new(file_path).exists() {
         return Err(format!("Include Error The File {file_path} could not be found."))
     }
 
-    let content = fs::read_to_string(parts[0]);
+    let content = fs::read_to_string(file_path);
     if content.is_err() {
         return Err(format!("Include Error: The File {file_path} could not be read."))
     }
@@ -389,7 +509,7 @@ fn handle_include(path: &str, _: IncludeType, _: &str, _: usize) -> IncludeCallb
     //return Err(format!("glsl_content {glsl_content}"));
 
     Ok(ResolvedInclude {
-        resolved_name: path.to_string(),
+        resolved_name: format!("{file_path}_glsl_macro_{glsl_macro_name}"),
         content: glsl_content.to_string(),
     })
 }

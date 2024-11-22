@@ -43,3 +43,27 @@ fn included() {
     }};
 }
 
+#[test]
+fn glsl_file_include() {
+    let bin = glsl!{type = Compute, code = {
+        #version 450 core
+        
+        #include "shaders/test_include.glsl"
+    
+        layout(binding = 0, rgba8) uniform writeonly image2D img;
+        void main () {
+            uvec2 pos = gl_GlobalInvocationID.xy;
+            imageStore(img, ivec2(pos), COLOR);
+        }
+    }};
+
+    println!("{:?}", bin)
+}
+
+#[test]
+fn glsl_from_file() {
+    let bin: &[u8] = glsl!{type = Compute, file = "shaders/test.glsl"};
+
+    println!("{:?}", bin)
+}
+

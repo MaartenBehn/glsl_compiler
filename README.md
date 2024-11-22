@@ -70,15 +70,37 @@ error:  no matching overloaded function found
    |             ^^^^^^^^^^
 ```
 
+## Just compiling a glsl file at compile time
+```rust
+let bin: &[u8] = glsl!{type = Compute, file = "shaders/test.glsl"};
+```
+
+## Including Code from other glsl file
+
+Example Glsl File Name: "shaders/included.glsl"
+```rust
+let bin: &[u8] = glsl!{type = Compute, code = {
+    #version 450 core
+    
+    #include "shaders/included.glsl"
+
+    layout(binding = 0, rgba8) uniform writeonly image2D img;
+    void main () {
+        uvec2 pos = gl_GlobalInvocationID.xy;
+        imageStore(img, ivec2(pos), COLOR);
+    }
+}};
+```
+
 ## Including Code from other Macro
 
-Example File Name: "lib.rs"
+Example Rust File Name: "src/main.rs"
 ```rust 
 fn shader() {
-    let bin = glsl!{type = Compute, code = {
+    let bin: &[u8] = glsl!{type = Compute, code = {
         #version 450 core
         
-        #include "src/lib.rs-included.glsl"
+        #include "src/main.rs-included.glsl"
     
         layout(binding = 0, rgba8) uniform writeonly image2D img;
         void main () {
