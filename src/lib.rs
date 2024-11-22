@@ -439,7 +439,7 @@ fn handle_glsl_include(file_path: &str, origen_path: &str) -> IncludeCallbackRes
     };
     
     if !Path::new(&path).exists() {
-        return Err(format!("Include Error The File {path} could not be found."))
+        return Err(format!("Include Error The File {path} could not be found. {origen_path}"))
     }
 
     let content = fs::read_to_string(&path);
@@ -449,7 +449,7 @@ fn handle_glsl_include(file_path: &str, origen_path: &str) -> IncludeCallbackRes
     let content = content.unwrap();
     
     Ok(ResolvedInclude {
-        resolved_name: file_path.to_string(),
+        resolved_name: path.to_string(),
         content: content.to_string(),
     })
 }
