@@ -137,6 +137,8 @@ enum Token {
     Code(bool),
     Name,
     File(bool),
+    Debug,
+    Release,
 }
 
 const MARCO_FILE_PATH: &str = "in_marco";
@@ -182,6 +184,7 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let mut code_text = None;
     let mut file_text = None;
     let mut code_token_tree = None;
+    let mut debug = cfg!(debug_assertions);
 
     for token in input.into_iter(){
         let text = token.span().source_text().unwrap();
@@ -190,7 +193,7 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             continue
         }
 
-        if text == "type"{
+        if text == "type" {
             current_token = Token::Type(false);
             type_token = Token::Type(false);
         } else if text == "code" {
@@ -198,6 +201,12 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             code_token = Token::Code(false);
         } else if text == "name" {
             current_token = Token::Name;
+        } else if text == "debug" {
+            current_token = Token::Debug;
+            debug = true;
+        }  else if text == "release" {
+            current_token = Token::Release;
+            debug = false;
         } else if text == "file" {
             current_token = Token::File(false);
         } else if text == "=" {
@@ -320,8 +329,16 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let compiler = shaderc::Compiler::new().unwrap();
     let mut options = shaderc::CompileOptions::new().unwrap();
     options.set_include_callback(handle_include);
-    options.set_auto_combined_image_sampler(true);
-    options.set_optimization_level(OptimizationLevel::Performance);
+
+    if debug {
+        println!("Shader in debug mode");
+        options.set_optimization_level(OptimizationLevel::Zero);
+        options.set_generate_debug_info();
+    } else {
+        println!("Shader in release mode");
+        options.set_auto_combined_image_sampler(true);
+        options.set_optimization_level(OptimizationLevel::Performance);
+    }
 
     let binary_result = compiler.compile_into_spirv(
         &source,
