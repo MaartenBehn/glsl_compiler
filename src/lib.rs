@@ -129,7 +129,7 @@ use proc_macro2::{Span, TokenTree};
 use proc_macro_error::{abort_call_site, emit_call_site_error, emit_error, proc_macro_error};
 use std::str::FromStr;
 use std::string::ToString;
-use shaderc::{IncludeCallbackResult, IncludeType, ResolvedInclude};
+use shaderc::{IncludeCallbackResult, IncludeType, OptimizationLevel, ResolvedInclude};
 
 enum Token {
     None,
@@ -320,6 +320,8 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let compiler = shaderc::Compiler::new().unwrap();
     let mut options = shaderc::CompileOptions::new().unwrap();
     options.set_include_callback(handle_include);
+    options.set_auto_combined_image_sampler(true);
+    options.set_optimization_level(OptimizationLevel::Performance);
 
     let binary_result = compiler.compile_into_spirv(
         &source,
