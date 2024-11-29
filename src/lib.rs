@@ -120,6 +120,7 @@ fn included() {
 ```
 */
 
+mod profiler;
 
 extern crate proc_macro;
 
@@ -130,6 +131,7 @@ use proc_macro_error::{abort_call_site, emit_call_site_error, emit_error, proc_m
 use std::str::FromStr;
 use std::string::ToString;
 use shaderc::{IncludeCallbackResult, IncludeType, OptimizationLevel, ResolvedInclude};
+use crate::profiler::inject_profiler;
 
 enum Token {
     None,
@@ -139,6 +141,7 @@ enum Token {
     File(bool),
     Debug,
     Release,
+    Profile,
 }
 
 const MARCO_FILE_PATH: &str = "in_marco";
@@ -185,6 +188,7 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let mut file_text = None;
     let mut code_token_tree = None;
     let mut debug = cfg!(debug_assertions);
+    let mut profile = false;
 
     for token in input.into_iter(){
         let text = token.span().source_text().unwrap();
@@ -204,9 +208,12 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         } else if text == "debug" {
             current_token = Token::Debug;
             debug = true;
-        }  else if text == "release" {
+        } else if text == "release" {
             current_token = Token::Release;
             debug = false;
+        } else if text == "profile" {
+            current_token = Token::Profile;
+            profile = true;
         } else if text == "file" {
             current_token = Token::File(false);
         } else if text == "=" {
@@ -284,7 +291,7 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     };
 
     
-    let (source, file_path) = if file_text.is_some(){
+    let (mut source, file_path) = if file_text.is_some(){
         if code_token_tree.is_some() {
             abort_call_site!("Cannot use file = \"<glsl file path>\" and code = <glsl code> in one marco");
         }
@@ -324,10 +331,14 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         }, MARCO_FILE_PATH.to_string())
     };
 
-    
+    source = manually_include(&source, &file_path, 0);
+    let (source, scope_names) = inject_profiler(source, profile);
+
     println!("Shader input {source}");
     let compiler = shaderc::Compiler::new().unwrap();
     let mut options = shaderc::CompileOptions::new().unwrap();
+
+    // Should not be needed because all #include statements have already been resolved manually.
     options.set_include_callback(handle_include);
 
     if debug {
@@ -357,7 +368,7 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             for err_line in err_lines.iter().skip(1) {
                 let parts: Vec<_> = err_line.split(":").collect();
 
-                // println!("Err Message Parts {parts:?}");
+                println!("Err Message Parts {parts:?}");
                 let line = parts[0].parse::<usize>();
                 if line.is_err() {
                     emit_call_site_error!("Error: {}", err_line);
@@ -374,20 +385,27 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
                 let (span, _, _) = find_best_line(&source, code_token_tree.clone(), key,0, line - 1);
                 if span.is_some() {
-                    emit_error!(span.unwrap(), "{}", parts[3])
+                    emit_error!(span.unwrap(), "{} {}", parts[3], parts[2]);
                 } else {
-                    emit_call_site_error!("{}", parts[3])
+                    emit_call_site_error!("{} {}", parts[3], parts[2])
                 }
             }
         }
-        
+
         proc_macro::TokenStream::from_str(&format!("panic!(\"{err}\")")).unwrap()
     } else {
-        let mut res = "&[".to_string();
+
+        let mut res = "(&[".to_string();
         for byte in binary_result.unwrap().as_binary_u8() {
             res = format!("{res}{byte},");
         }
-        res = format!("{res}]");
+
+        res = format!("{res}], &[");
+
+        for name in scope_names {
+            res = format!("{res}\"{name}\",");
+        }
+        res = format!("{res}])");
 
         proc_macro::TokenStream::from_str(&res).unwrap()
     }
@@ -397,7 +415,12 @@ fn find_best_line<'a>(mut source: &'a str, t: TokenTree, key: &'a str, mut curre
     
     let mut check = |span: Span| {
         let text = span.source_text().unwrap();
-        let position = source.find(&text).unwrap();
+        let position = source.find(&text);
+        if position.is_none() {
+           return (None, source, current_line)
+        }
+        let position = position.unwrap();
+
         let lines = source[..position].chars().filter(|c| *c == '\n').count();
 
         current_line += lines;
@@ -429,6 +452,51 @@ fn find_best_line<'a>(mut source: &'a str, t: TokenTree, key: &'a str, mut curre
     }
 
     (None, source, current_line)
+}
+
+
+fn manually_include(source: &str, path: &str, recursion_depth: usize) -> String {
+    let mut source = source.to_string();
+
+    // Find all #include positions
+    let include_positions: Vec<usize> = source
+        .match_indices("#include")
+        .map(|(i, _)|i)
+        .collect();
+
+    for include_position in include_positions.into_iter().rev() {
+        let include_line_end = source[include_position..].find('\n');
+        if include_line_end.is_none() {
+            abort_call_site!("#include has no new line after it"; note=source);
+        }
+        let include_line_end = include_line_end.unwrap() + include_position;
+        let include_line = &source[include_position..include_line_end];
+
+        let quote_indices: Vec<usize> = include_line
+            .match_indices('"')
+            .map(|(i, _)|i)
+            .collect();
+
+        if quote_indices.len() != 2 {
+            abort_call_site!("#include must have 2 \" in the line"; note=include_line);
+        }
+
+        let include_file_path = &include_line[(quote_indices[0] + 1)..quote_indices[1]];
+        let res = handle_include(include_file_path, IncludeType::Relative, path, recursion_depth);
+        if res.is_err() {
+            let error_string = res.err().unwrap();
+            abort_call_site!("#include error: {}", error_string);
+        }
+
+        let res = res.unwrap();
+        let include_source = res.content;
+        let resolved_include_file_path = res.resolved_name;
+        let include_content = manually_include(&include_source, &resolved_include_file_path, recursion_depth + 1);
+
+        source.replace_range(include_position..include_line_end, &include_content);
+    }
+
+    source
 }
 
 fn handle_include(path: &str, _: IncludeType, file_path: &str, _: usize) -> IncludeCallbackResult {
@@ -499,23 +567,7 @@ fn handle_rust_include(file_path: &str, glsl_macro_name: &str) -> IncludeCallbac
     }
     let code_start_index = code_start_index.unwrap() + name_index + 8;
 
-    let mut counter = 1;
-    let mut code_end_index = None;
-    for (offset, val) in content[code_start_index..]
-        .match_indices(['{', '}'])
-        .into_iter() {
-
-        if val == "{" {
-            counter += 1;
-        } else if val == "}" {
-            counter -= 1;
-        }
-
-        if counter <= 0 {
-            code_end_index = Some(offset -2);
-            break
-        }
-    }
+    let code_end_index = find_closing_bracket(&content[code_start_index..]);
 
     if code_end_index.is_none() {
         return Err(format!("Include Error No closing Brace found! name = \"{glsl_macro_name}\" must be followed by a code = {{<glsl>}}. \
@@ -531,6 +583,28 @@ fn handle_rust_include(file_path: &str, glsl_macro_name: &str) -> IncludeCallbac
         resolved_name: format!("{file_path}_glsl_macro_{glsl_macro_name}"),
         content: glsl_content.to_string(),
     })
+}
+
+fn find_closing_bracket(content: &str) -> Option<usize> {
+    let mut counter = 1;
+    let mut code_end_index = None;
+    for (offset, val) in content
+        .match_indices(['{', '}'])
+        .into_iter() {
+
+        if val == "{" {
+            counter += 1;
+        } else if val == "}" {
+            counter -= 1;
+        }
+
+        if counter <= 0 {
+            code_end_index = Some(offset -2);
+            break
+        }
+    }
+
+    code_end_index
 }
 
 

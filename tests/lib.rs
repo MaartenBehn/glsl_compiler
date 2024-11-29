@@ -3,7 +3,7 @@ extern crate glsl_compiler;
 
 #[test]
 fn void_main_empty() {
-    let bin = glsl!{type = Compute, code = {
+    let (bin, _): (&[u8], &[&str]) = glsl!{type = Compute, code = {
         #version 450 core
     
         layout(binding = 0, rgba8) uniform writeonly image2D img;
@@ -21,7 +21,7 @@ fn void_main_empty() {
 
 #[test]
 fn shader() {
-    let bin = glsl!{type = Compute, code = {
+    let (bin, _): (&[u8], &[&str]) = glsl!{type = Compute, code = {
         #version 450 core
         
         #include "tests/lib.rs-included.glsl"
@@ -45,7 +45,7 @@ fn included() {
 
 #[test]
 fn glsl_file_include() {
-    let bin = glsl!{type = Compute, code = {
+    let (bin, _): (&[u8], &[&str]) = glsl!{type = Compute, code = {
         #version 450 core
         
         #include "shaders/test_include.glsl"
@@ -62,14 +62,14 @@ fn glsl_file_include() {
 
 #[test]
 fn glsl_from_file() {
-    let bin: &[u8] = glsl!{type = Compute, file = "shaders/test.glsl"};
+    let (bin, _): (&[u8], &[&str]) = glsl!{type = Compute, file = "shaders/test.glsl"};
 
     println!("{:?}", bin)
 }
 
 #[test]
 fn glsl_file_include_in_include() {
-    let bin = glsl!{type = Compute, code = {
+    let (bin, _): (&[u8], &[&str]) = glsl!{type = Compute, code = {
         #version 450 core
         
         #include "shaders/test_include_include2.glsl"
@@ -86,8 +86,28 @@ fn glsl_file_include_in_include() {
 
 #[test]
 fn glsl_file_include_in_include2() {
-    let bin: &[u8] = glsl!{type = Compute, file = "shaders/test_include_include3.glsl"};
+    let (bin, _): (&[u8], &[&str]) = glsl!{type = Compute, file = "shaders/test_include_include3.glsl"};
 
     println!("{:?}", bin)
+}
+
+#[test]
+fn glsl_file_profile() {
+    let (bin, profile_scope_names): (&[u8], &[&str]) = glsl!{type = Compute, profile, code = {
+        #version 450 core
+
+        #include "shaders/test_include_include2.glsl"
+
+        layout(binding = 0, rgba8) uniform writeonly image2D img;
+        void main () {
+            PROFILE("main");
+
+            uvec2 pos = gl_GlobalInvocationID.xy;
+            imageStore(img, ivec2(pos), COLOR);
+        }
+    }};
+
+    println!("{:?}", bin);
+    println!("{:?}", profile_scope_names);
 }
 
