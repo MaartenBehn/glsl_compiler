@@ -34,7 +34,6 @@ fn profile_end_code(name: &str, profile_scope_names: &mut Vec<String>) -> String
 fn profile_inject_code<'a>(num_scopes: usize) -> String {
     format!(r#"
 #extension GL_EXT_shader_realtime_clock : require
-#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
 layout(binding = 10) uniform ProfilerIn {{
     uint active_pixel_x;
@@ -61,10 +60,10 @@ void PROFILE_SCOPE_BEING(uint id) {{
     }}
     uint index = id * 5;
 
-    uint64_t timing = clockRealtimeEXT();
+    uvec2 timing = clockRealtime2x32EXT();
     profiler_out.data[index]++;
-    profiler_out.data[index + 1] = uint(timing);
-    profiler_out.data[index + 2] = uint(timing >> 32);
+    profiler_out.data[index + 1] = timing.x;
+    profiler_out.data[index + 2] = timing.y;
 }}
 
 void PROFILE_SCOPE_END(uint id) {{
@@ -73,9 +72,9 @@ void PROFILE_SCOPE_END(uint id) {{
     }}
     uint index = id * 5;
 
-    uint64_t end = clockRealtimeEXT();
-    profiler_out.data[index + 3] = uint(end);
-    profiler_out.data[index + 4] = uint(end >> 32);
+    uvec2 timing = clockRealtime2x32EXT();
+    profiler_out.data[index + 3] = timing.x;
+    profiler_out.data[index + 4] = timing.y;
 }}
     "#)
 }
