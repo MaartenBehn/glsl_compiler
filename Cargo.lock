@@ -22,7 +22,7 @@ dependencies = [
 
 [[package]]
 name = "glsl_compiler"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "proc-macro-error",
  "proc-macro2",

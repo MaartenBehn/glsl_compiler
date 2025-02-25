@@ -79,14 +79,14 @@ void PROFILE_SCOPE_END(uint id) {{
     "#)
 }
 
-pub fn inject_profiler(mut source: String, active: bool) -> (String, Vec<String>) {
+pub fn inject_profiler(mut source: String) -> (String, Vec<String>) {
     let mut profile_scope_names = vec![];
 
     let mut main_scope_placed = false;
     let mut start_offset = 0;
 
-    while true {
-        let profile_start = source[start_offset..].find("PROFILE(\"");
+    loop {
+        let profile_start = source[start_offset..].find("//PROFILE(\"");
         if profile_start.is_none() {
             break
         }
@@ -95,22 +95,17 @@ pub fn inject_profiler(mut source: String, active: bool) -> (String, Vec<String>
 
         let include_line_end = source[profile_start..].find("\");");
         if include_line_end.is_none() {
-            abort_call_site!("PROFILE(\" doesn't end with \");"; note=source[profile_start..]);
+            abort_call_site!("//PROFILE(\" doesn't end with \");"; note=source[profile_start..]);
         }
         let include_line_end = include_line_end.unwrap() + profile_start + 3;
-
-        if !active {
-            source.replace_range(profile_start..include_line_end, "");
-            continue;
-        }
-
+        
         let code_end_index = find_closing_bracket(&source[profile_start..]);
         if code_end_index.is_none() {
-            abort_call_site!("PROFILE(\"<name>\"); in invalid scope. No closing bracket found!"; note=source[profile_start..]);
+            abort_call_site!("//PROFILE(\"<name>\"); in invalid scope. No closing bracket found!"; note=source[profile_start..]);
         }
         let code_end_index = code_end_index.unwrap() + profile_start + 1;
 
-        let name = &source[(profile_start + 9)..(include_line_end - 3)].to_string();
+        let name = &source[(profile_start + 11)..(include_line_end - 3)].to_string();
         let main_scope = name == "main";
         main_scope_placed |= main_scope;
 
@@ -129,10 +124,10 @@ pub fn inject_profiler(mut source: String, active: bool) -> (String, Vec<String>
         source.replace_range(profile_start..include_line_end, &profile_begin_code(&name, &mut profile_scope_names, main_scope));
     }
 
-    if !active {
-        return (source, vec![])
+    if !main_scope_placed {
+        abort_call_site!("Please place a //PROFILE(\"main\") at the start of the main function.");
     }
-
+ 
     let version_start = source.find("#version");
     if version_start.is_none() {
         abort_call_site!("no #version found!");

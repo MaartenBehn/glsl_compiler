@@ -1,6 +1,6 @@
 [package]
 name = "glsl_compiler"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 repository = "https://github.com/MaartenBehn/glsl_compiler"
 readme = "README.md"

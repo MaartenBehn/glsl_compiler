@@ -142,6 +142,7 @@ enum Token {
     Debug,
     Release,
     Profile,
+    Print,
 }
 
 const MARCO_FILE_PATH: &str = "in_marco";
@@ -189,6 +190,7 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let mut code_token_tree = None;
     let mut debug = cfg!(debug_assertions);
     let mut profile = false;
+    let mut print = false;
 
     for token in input.into_iter(){
         let text = token.span().source_text().unwrap();
@@ -214,6 +216,9 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         } else if text == "profile" {
             current_token = Token::Profile;
             profile = true;
+        } else if text == "print" {
+            current_token = Token::Print;
+            print = true;
         } else if text == "file" {
             current_token = Token::File(false);
         } else if text == "=" {
@@ -331,10 +336,17 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         }, MARCO_FILE_PATH.to_string())
     };
 
-    source = manually_include(&source, &file_path, 0);
-    let (source, scope_names) = inject_profiler(source, profile);
+    let (source, scope_names) = if profile {
+        source = manually_include(&source, &file_path, 0);
+        inject_profiler(source)
+    } else {
+        (source, vec![])
+    };
 
-    println!("Shader input {source}");
+    if print {
+        println!("Shader input {source}");
+    }
+
     let compiler = shaderc::Compiler::new().unwrap();
     let mut options = shaderc::CompileOptions::new().unwrap();
 
@@ -342,11 +354,9 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     options.set_include_callback(handle_include);
 
     if debug {
-        println!("Shader in debug mode");
         options.set_optimization_level(OptimizationLevel::Zero);
         options.set_generate_debug_info();
     } else {
-        println!("Shader in release mode");
         options.set_auto_combined_image_sampler(true);
         options.set_optimization_level(OptimizationLevel::Performance);
     }
@@ -406,6 +416,14 @@ pub fn glsl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             res = format!("{res}\"{name}\",");
         }
         res = format!("{res}])");
+
+        if debug {
+            println!("   > Compiled shader {} in debug mode.", file_path);
+        } else {
+            println!("   > Compiled shader {} in release mode.", file_path);
+        }
+
+
 
         proc_macro::TokenStream::from_str(&res).unwrap()
     }
