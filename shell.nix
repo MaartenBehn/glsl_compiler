@@ -1,6 +1,6 @@
 { pkgs ? (import <nixpkgs> {}), ... }:
 
-pkgs.mkShell rec {
+pkgs.mkShell {
 
   name = "glsl_compiler";
   RUSTC_VERSION = "stable";
@@ -13,4 +13,6 @@ pkgs.mkShell rec {
   packages = with pkgs; [
     rustup
   ];
+
+  SHADERC_LIB_DIR = pkgs.lib.makeLibraryPath [ "${pkgs.shaderc.lib}" ];
 }
